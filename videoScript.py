@@ -312,10 +312,11 @@ yunet = cv2.FaceDetectorYN.create(
     model=YUNET_MODEL,
     config="",
     input_size=(320, 240),
-    score_threshold=0.6,
+    score_threshold=0.85,
     nms_threshold=0.3,
     top_k=5000,
 )
+yunet_lock = threading.Lock()
 
 sface = cv2.FaceRecognizerSF.create(
     model=SFACE_MODEL,
@@ -348,55 +349,164 @@ def get_confidence_color(score, threshold=0.36):
         g = int(165 + (90 * factor))
         return (0, g, r)
 
+class FaceTracker:
+    """
+    Lightweight centroid tracker that tracks multiple faces across frames
+    and caches deep recognition results per individual face.
+    """
+    def __init__(self, max_disappeared=30, match_distance=60):
+        self.next_id = 0
+        self.tracks = {}  # { track_id: {"centroid": (cx, cy), "box": box, "disappeared": 0, "name": "Unknown", "score": 0.0, "color": (128,128,128), "last_rec_frame": 0} }
+        self.max_disappeared = max_disappeared
+        self.match_distance = match_distance
+        self.frame_count = 0
+
+    def update(self, detected_faces, frame, db, sface):
+        self.frame_count += 1
+
+        # If no faces detected, increment disappeared counter for all active tracks
+        if len(detected_faces) == 0:
+            to_delete = []
+            for tid in self.tracks:
+                self.tracks[tid]["disappeared"] += 1
+                if self.tracks[tid]["disappeared"] > self.max_disappeared:
+                    to_delete.append(tid)
+            for tid in to_delete:
+                del self.tracks[tid]
+            return []
+
+        # Compute centroids for newly detected faces
+        current_centroids = []
+        for face in detected_faces:
+            x, y, fw, fh = face[0:4].astype(int)
+            cx = int(x + fw / 2)
+            cy = int(y + fh / 2)
+            current_centroids.append((cx, cy))
+
+        active_track_ids = list(self.tracks.keys())
+        assigned_tracks = set()
+        assigned_detections = set()
+
+        # Match detections to existing tracks by Euclidean centroid distance
+        if active_track_ids:
+            for d_idx, (cx, cy) in enumerate(current_centroids):
+                best_dist = float("inf")
+                best_tid = None
+
+                for tid in active_track_ids:
+                    if tid in assigned_tracks:
+                        continue
+                    tcx, tcy = self.tracks[tid]["centroid"]
+                    dist = ((cx - tcx) ** 2 + (cy - tcy) ** 2) ** 0.5
+                    if dist < best_dist and dist < self.match_distance:
+                        best_dist = dist
+                        best_tid = tid
+
+                if best_tid is not None:
+                    assigned_tracks.add(best_tid)
+                    assigned_detections.add(d_idx)
+                    # Update existing track
+                    track = self.tracks[best_tid]
+                    track["centroid"] = (cx, cy)
+                    track["box"] = detected_faces[d_idx][0:4].astype(int)
+                    track["disappeared"] = 0
+
+                    # Recompute SFace only once every 15 frames for this specific person
+                    if (self.frame_count - track["last_rec_frame"] >= 15) or (track["name"] == "Unknown" and self.frame_count - track["last_rec_frame"] >= 5):
+                        aligned = sface.alignCrop(frame, detected_faces[d_idx])
+                        feat = sface.feature(aligned)
+                        name, score = db.match(feat)
+                        track["name"] = name
+                        track["score"] = score
+                        track["color"] = get_confidence_color(score)
+                        track["last_rec_frame"] = self.frame_count
+
+        # Register brand-new faces
+        for d_idx, (cx, cy) in enumerate(current_centroids):
+            if d_idx not in assigned_detections:
+                aligned = sface.alignCrop(frame, detected_faces[d_idx])
+                feat = sface.feature(aligned)
+                name, score = db.match(feat)
+                color = get_confidence_color(score)
+
+                self.tracks[self.next_id] = {
+                    "centroid": (cx, cy),
+                    "box": detected_faces[d_idx][0:4].astype(int),
+                    "disappeared": 0,
+                    "name": name,
+                    "score": score,
+                    "color": color,
+                    "last_rec_frame": self.frame_count,
+                }
+                self.next_id += 1
+
+        # Age out unassigned tracks
+        to_delete = []
+        for tid in self.tracks:
+            if tid not in assigned_tracks:
+                self.tracks[tid]["disappeared"] += 1
+                if self.tracks[tid]["disappeared"] > self.max_disappeared:
+                    to_delete.append(tid)
+        for tid in to_delete:
+            del self.tracks[tid]
+
+        # Return list of active face render targets for current frame
+        return [self.tracks[tid] for tid in self.tracks if self.tracks[tid]["disappeared"] == 0]
+
+
+tracker = FaceTracker(max_disappeared=15, match_distance=70)
+
 
 def process_frame(frame):
-    """Detects faces using YuNet, crops/aligns via SFace, and draws colored overlays."""
+    """Detects faces every frame and uses centroid tracking to cache recognition per person."""
     h, w = frame.shape[:2]
-    yunet.setInputSize((w, h))
-
-    _, faces = yunet.detect(frame)
-
+    
+    with yunet_lock:
+        yunet.setInputSize((w, h))
+        _, faces = yunet.detect(frame)
+        
+    valid_faces = []
     if faces is not None:
         for face in faces:
             box = face[0:4].astype(int)
-            x, y, fw, fh = box[0], box[1], box[2], box[3]
+            fw, fh = box[2], box[3]
+            confidence = face[-1]
+            # Ignore sensor noise and tiny crops
+            if fw >= 50 and fh >= 50 and confidence >= 0.85:
+                valid_faces.append(face)
 
-            # Ensure box remains within frame boundaries
-            x = max(0, x)
-            y = max(0, y)
-            fw = min(fw, w - x)
-            fh = min(fh, h - y)
+    # Update tracker across all valid faces in frame
+    active_faces = tracker.update(valid_faces, frame, db, sface)
 
-            # Align face crop and extract 128D embedding
-            aligned_face = sface.alignCrop(frame, face)
-            feature = sface.feature(aligned_face)
+    # Draw overlays for each tracked individual
+    for person in active_faces:
+        x, y, fw, fh = person["box"]
+        color = person["color"]
+        name = person["name"]
+        score = person["score"]
 
-            # Match against profile database
-            name, score = db.match(feature)
-            color = get_confidence_color(score)
+        # Ensure box fits in bounds
+        x = max(0, x)
+        y = max(0, y)
+        fw = min(fw, w - x)
+        fh = min(fh, h - y)
 
-            # Draw bounding box
-            cv2.rectangle(frame, (x, y), (x + fw, y + fh), color, 2)
+        cv2.rectangle(frame, (x, y), (x + fw, y + fh), color, 2)
 
-            # Draw label with percentage
-            if name == "Unknown":
-                label = f"Unknown ({int(score * 100)}%)"
-            else:
-                label = f"{name} ({int(score * 100)}%)"
+        label = f"{name} ({int(score * 100)}%)" if name != "Unknown" else f"Unknown ({int(score * 100)}%)"
 
-            # Background pill for readability
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-            cv2.rectangle(frame, (x, max(0, y - 22)), (x + tw + 6, max(22, y)), color, -1)
-            cv2.putText(
-                frame,
-                label,
-                (x + 3, max(16, y - 5)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 0) if color[1] > 200 else (255, 255, 255),
-                1,
-                cv2.LINE_AA,
-            )
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+        cv2.rectangle(frame, (x, max(0, y - 22)), (x + tw + 6, max(22, y)), color, -1)
+        cv2.putText(
+            frame,
+            label,
+            (x + 3, max(16, y - 5)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (0, 0, 0) if color[1] > 200 else (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
     dev_label = stream.src if stream and stream.src else "None (Fallback)"
     cv2.putText(
@@ -449,8 +559,11 @@ def api_freeze():
         return jsonify({"error": "No camera feed available"}), 503
 
     h, w = frame.shape[:2]
-    yunet.setInputSize((w, h))
-    _, faces = yunet.detect(frame)
+
+    
+    with yunet_lock:
+        yunet.setInputSize((w, h))
+        _, faces = yunet.detect(frame)
 
     thumbnails = []
     with freeze_cache["lock"]:
@@ -462,6 +575,10 @@ def api_freeze():
         for idx, face in enumerate(faces):
             box = face[0:4].astype(int)
             x, y, fw, fh = box[0], box[1], box[2], box[3]
+            confidence = face[-1]
+
+            if fw < 50 or fh < 50 or confidence < 0.85:
+                continue
 
             # Pad crop slightly
             pad_x = int(fw * 0.1)
