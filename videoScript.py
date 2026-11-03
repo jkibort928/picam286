@@ -334,6 +334,7 @@ sface = cv2.FaceRecognizerSF.create(
     model=SFACE_MODEL,
     config="",
 )
+sface_lock = threading.Lock()
 
 def get_confidence_color(score, threshold=0.36):
     """
@@ -425,8 +426,9 @@ class FaceTracker:
 
                     # Recompute SFace only once every 15 frames for this specific person
                     if (self.frame_count - track["last_rec_frame"] >= 15) or (track["name"] == "Unknown" and self.frame_count - track["last_rec_frame"] >= 5):
-                        aligned = sface.alignCrop(frame, detected_faces[d_idx])
-                        feat = sface.feature(aligned)
+                        with sface_lock:
+                            aligned = sface.alignCrop(frame, detected_faces[d_idx])
+                            feat = sface.feature(aligned)
                         name, score = db.match(feat)
                         track["name"] = name
                         track["score"] = score
@@ -436,8 +438,9 @@ class FaceTracker:
         # Register brand-new faces
         for d_idx, (cx, cy) in enumerate(current_centroids):
             if d_idx not in assigned_detections:
-                aligned = sface.alignCrop(frame, detected_faces[d_idx])
-                feat = sface.feature(aligned)
+                with sface_lock:
+                    aligned = sface.alignCrop(frame, detected_faces[d_idx])
+                    feat = sface.feature(aligned)
                 name, score = db.match(feat)
                 color = get_confidence_color(score)
 
@@ -628,8 +631,9 @@ def api_register():
         return jsonify({"error": "Invalid or expired freeze cache"}), 400
 
     selected_face = faces[face_idx]
-    aligned_face = sface.alignCrop(frame, selected_face)
-    feature = sface.feature(aligned_face)
+    with sface_lock:
+        aligned_face = sface.alignCrop(frame, selected_face)
+        feature = sface.feature(aligned_face)
 
     success = db.add_feature(name, feature)
     return jsonify({"success": success, "name": name, "profiles": db.list_profiles()})
@@ -774,7 +778,7 @@ def index():
                                 card.innerHTML = `
                                     <button class="close-btn" title="Dismiss" onclick="removeCard('${cardId}')">&times;</button>
                                     <img src="data:image/jpeg;base64,${t.image_b64}" alt="Face #${t.index}">
-                                    <input type="text" id="nameInput_${t.index}" placeholder="Enter Name">
+                                    <input type="text" id="nameInput_${t.index}" placeholder="Enter Name" onkeydown="if(event.key === 'Enter') registerFace(${t.index}, '${cardId}')">
                                     <button class="save-btn" onclick="registerFace(${t.index}, '${cardId}')">Save</button>
                                 `;
                                 grid.appendChild(card);
