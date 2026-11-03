@@ -88,6 +88,6 @@ python3 videoScript.py --debug-feed --device /dev/video0
 * **Resolution**:
   * **On Linux PC / Distrobox**: Use a Python virtual environment and install a modern precompiled wheel:
     ```bash
-    pip install --upgrade opencv-python
+    pip install --upgrade opencv-python flask numpy
     ```
   * **On Raspberry Pi 3**: Ensure your system packages are fully updated (`sudo apt update && sudo apt upgrade`), or pin YuNet to a commit built against OpenCV 4.6.0 (`face_detection_yunet_2022mar.onnx`). Do not compile OpenCV or use `pip` on the Pi 3 to avoid out-of-memory (OOM) build failure.
