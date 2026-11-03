@@ -15,7 +15,7 @@ sudo apt install -y python3-opencv opencv-data python3-flask python3-numpy v4l-u
 ```
 
 ### Linux Workstation / Distrobox Development (Fedora Silverblue, Ubuntu, Arch)
-On x86_64 development machines, precompiled binary wheels install in seconds without building from source:
+On x86_64 development machines, it avoids building opencv dependencies from source so it is preferred to use venv and pip:
 
 ```bash
 python3 -m venv .venv
@@ -81,7 +81,6 @@ python3 videoScript.py
 ```
 
 - **Web Dashboard**: Open `http://<DEVICE_IP>:5000` in a browser.
-- **Important**: Always connect over `http://`, not `https://`. Connecting via HTTPS will reject the plain HTTP socket.
 
 ### Advanced Flags
 
@@ -103,12 +102,10 @@ python3 videoScript.py
 ## 4. Key Features & Pipeline Architecture
 
 * **Multi-Person Centroid Tracking**: Uses a lightweight Euclidean centroid tracker (`FaceTracker`) to track multiple faces simultaneously across frames. Each individual retains their own tracking ID, identity label, and confidence score.
-* **Recognition Caching & Thermal Protection**: Deep 128D SFace feature extraction is throttled to run only once every 15 frames per tracked individual (or when a new face enters). Bounding box detection runs continuously, keeping CPU utilization on the Pi 3 between 20–30% and preventing thermal throttling down to 600 MHz.
-* **False-Positive & Noise Rejection**: YuNet `score_threshold` is set to `0.85` with a minimum bounding box threshold of 50x50 px to eliminate sensor grain and low-light skin-tone false positives.
+* **Recognition Throttling**: Deep 128D SFace feature extraction is throttled to run only once every 15 frames per tracked individual (or when a new face enters). The lighter bounding box detection runs continuously.
 * **Web Enrollment & Freeze-Frame Registration**: The web interface allows freezing any live frame to detect, crop, and display candidate faces. Names can be typed and submitted by pressing **Enter** or clicking **Save**.
 * **Case-Insensitive Profile Persistence**: Profiles are stored locally in `profiles.json`. Names preserve original display capitalization upon creation (e.g., `"Jack"`), but subsequent registrations and lookups match case-insensitively (`"jack"`, `"JACK"`).
 * **Hardware Recovery & Anti-Tearing**: Enforces `MJPG` capture at 15 FPS with driver buffer size 1. If a camera disconnects, the system serves a diagnostic placeholder frame and polls for reconnection every 2 seconds without crashing.
-* **Thread Safety**: Model inference calls (`yunet` and `sface`) are protected by mutex locks (`threading.Lock`) to eliminate concurrent DNN forward pass assertion crashes between the MJPEG video stream and API worker threads.
 
 ---
 
@@ -118,7 +115,7 @@ python3 videoScript.py
 * **Cause**: Stock Debian 12 (Bookworm) repositories provide OpenCV 4.6.0, which contains an upstream bug in its ONNX parser when handling dynamic input sizing with `face_detection_yunet_2023mar.onnx`.
 * **Resolution**:
   * **On PC / Laptop / Distrobox**: Install modern OpenCV wheels in a virtual environment (`pip install --upgrade opencv-python`).
-  * **On Raspberry Pi 3**: Download the pinned OpenCV 4.6-compatible 2022 release:
+  * **On Raspberry Pi 3**: Raspbian ships updated OpenCV versions so this shouldn't be an issue, but if you still encounter this error, try downloading the pinned OpenCV 4.6-compatible 2022 release:
     ```bash
     wget -O face_detection_yunet_2022mar.onnx \
       https://github.com/opencv/opencv_zoo/raw/7e062e54cf5410c09b795ff71b4a255e58498c79/models/face_detection_yunet/face_detection_yunet_2022mar.onnx
@@ -130,8 +127,3 @@ python3 videoScript.py
 * **Resolution**: Launch your script prefixed with `libcamerify`:
   ```bash
   libcamerify python3 videoScript.py
-  ```
-
-### Frame Tearing or Horizontal Slicing on USB Webcams
-* **Cause**: The camera is outputting uncompressed YUYV video, saturating the Raspberry Pi 3's shared USB 2.0 controller.
-* **Resolution**: Ensure `self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))` is active in `VideoStream`.
