@@ -214,6 +214,14 @@ class ProfileDatabase:
         self.profiles = {}  # { name: [vector_1, vector_2, ...] }
         self.load()
 
+    def _find_canonical_name(self, name):
+        """Returns the existing key matching name case-insensitively, or None."""
+        lookup = name.strip().lower()
+        for existing in self.profiles:
+            if existing.lower() == lookup:
+                return existing
+        return None
+
     def load(self):
         if os.path.exists(self.filepath):
             try:
@@ -279,20 +287,24 @@ class ProfileDatabase:
         if norm_val > 0:
             feat_norm = feat_norm / norm_val
 
-        if name not in self.profiles:
-            self.profiles[name] = []
+        # Match existing capitalization if already registered; otherwise preserve new casing
+        canonical_name = self._find_canonical_name(name) or name
 
-        self.profiles[name].append(feat_norm)
+        if canonical_name not in self.profiles:
+            self.profiles[canonical_name] = []
+
+        self.profiles[canonical_name].append(feat_norm)
         self.save()
-        print(f"[+] Added sample for '{name}'. Total samples: {len(self.profiles[name])}")
+        print(f"[+] Added sample for '{canonical_name}'. Total samples: {len(self.profiles[canonical_name])}")
         return True
 
     def delete_profile(self, name):
-        """Deletes all vector samples associated with a name."""
-        if name in self.profiles:
-            del self.profiles[name]
+        """Deletes all vector samples associated with a name (case-insensitive)."""
+        canonical_name = self._find_canonical_name(name)
+        if canonical_name and canonical_name in self.profiles:
+            del self.profiles[canonical_name]
             self.save()
-            print(f"[-] Deleted profile '{name}'")
+            print(f"[-] Deleted profile '{canonical_name}'")
             return True
         return False
 
