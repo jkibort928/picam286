@@ -7,3 +7,9 @@ __pycache__/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Pretrained ONNX model weights
+*.onnx
+
+# Local facial profiles database
+profiles.json
