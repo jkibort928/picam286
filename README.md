@@ -1,6 +1,6 @@
 # picam286
 
-A lightweight, thermal-aware face recognition and tracking appliance optimized for the Raspberry Pi 3 and Linux development workstations. Uses OpenCV DNN with YuNet (detection) and SFace (128D embeddings), backed by a web management interface for identity registration.
+A lightweight, resource-efficient face recognition and tracking appliance optimized for the Raspberry Pi 3 and Linux development workstations. Uses OpenCV DNN with YuNet (detection) and SFace (128D embeddings), backed by a web management interface for identity registration.
 
 ---
 
