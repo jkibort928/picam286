@@ -2,7 +2,7 @@
 
 ## 1. Prerequisites & System Setup
 
-Do not compile or install OpenCV or dlib via pip. The Pi 3 will run out of memory (OOM crash) during compilation. Use precompiled system packages from the Debian repositories.
+Do not compile or install OpenCV or dlib via pip on the pi. The Pi 3 will run out of memory (OOM crash) during compilation. Use precompiled system packages from the Debian repositories.
 
 ### Install Packages
 Run the following commands to install OpenCV, cascade classifier data files, Flask, NumPy, and V4L utilities:
@@ -80,3 +80,14 @@ python3 videoScript.py --debug-feed --device /dev/video0
 - Device Selection: Automatically detects and prioritizes CSI cameras over USB webcams.
 - Hotplug Support: If no camera is connected, the script displays a dark diagnostic frame ("NO CAMERA DETECTED") and rescans `/dev/video*` every 2 seconds. Plugging in a camera automatically restores the feed without restarting the process.
 - Face Recognition & Profiles: Recognizes registered faces loaded from `profiles.json`. Boxes display in gray for unknown identities, and scale from red to orange to green as confidence increases.
+
+## Troubleshooting & Known Compatibility Issues
+
+### `cv2.error: Layer with requested id=-1 not found`
+* **Cause**: Stock Debian 12 (Bookworm) repositories provide OpenCV 4.6.0, which has a known ONNX parser bug when handling dynamic input sizing with `face_detection_yunet_2023mar.onnx`.
+* **Resolution**:
+  * **On Linux PC / Distrobox**: Use a Python virtual environment and install a modern precompiled wheel:
+    ```bash
+    pip install --upgrade opencv-python
+    ```
+  * **On Raspberry Pi 3**: Ensure your system packages are fully updated (`sudo apt update && sudo apt upgrade`), or pin YuNet to a commit built against OpenCV 4.6.0 (`face_detection_yunet_2022mar.onnx`). Do not compile OpenCV or use `pip` on the Pi 3 to avoid out-of-memory (OOM) build failure.
