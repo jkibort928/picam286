@@ -37,65 +37,32 @@ class VideoStream:
         self.thread = None
         self.was_connected = self.is_connected
 
-    def _test_device(self, dev):
-        """Attempts to open a device node and grab a single test frame."""
+    _test_device(self, dev):
+        """Attempts to open a device node and grab a single test frame quickly."""
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if not cap.isOpened():
             return False
+        # Set short buffer to avoid hanging on non-streaming metadata nodes
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         grabbed, _ = cap.read()
         cap.release()
-        return grabbed
+        return bool(grabbed)
 
     def detect_camera_source(self):
         """
-        Scans V4L2 device nodes, excludes M2M codec/ISP blocks,
-        prioritizes CSI ribbon cameras over USB webcams, and tests reads.
+        Scans /dev/video* nodes numerically and returns the first functional capture device.
+        Works seamlessly with USB webcams and libcamerify-wrapped CSI cameras.
         """
-        csi_candidates = []
-        usb_candidates = []
-
-        # Sort nodes numerically (/dev/video0 before /dev/video10)
-        video_devices = sorted(
-            glob.glob("/sys/class/video4linux/video*"),
-            key=lambda x: int(os.path.basename(x).replace("video", "") or 0),
+        video_nodes = sorted(
+            glob.glob("/dev/video*"),
+            key=lambda x: int(x.replace("/dev/video", "") or 0),
         )
 
-        for vdev in video_devices:
-            dev_name = os.path.basename(vdev)
-            node_path = f"/dev/{dev_name}"
-            driver_link = os.path.realpath(os.path.join(vdev, "device/driver"))
-            driver_name = os.path.basename(driver_link).lower()
-
-            # Skip hardware encoder/decoder and ISP blocks
-            if "codec" in driver_name or "isp" in driver_name:
-                continue
-
-            # Check for CSI camera drivers vs USB UVC
-            if any(k in driver_name for k in ["unicam", "rp1-cfe"]):
-                csi_candidates.append(node_path)
-            elif "uvcvideo" in driver_name:
-                usb_candidates.append(node_path)
-
-        # 1. Prioritize verified CSI cameras
-        for dev in csi_candidates:
+        for dev in video_nodes:
             if self._test_device(dev):
-                print(f"[+] Verified Pi Camera Module on: {dev}")
+                print(f"[+] Verified active capture device on: {dev}")
                 return dev
 
-        # 2. Check verified USB webcams
-        for dev in usb_candidates:
-            if self._test_device(dev):
-                print(f"[+] Verified USB Webcam on: {dev}")
-                return dev
-
-        # 3. Fallback scan /dev/video0 through /dev/video4
-        for idx in range(5):
-            dev = f"/dev/video{idx}"
-            if os.path.exists(dev) and self._test_device(dev):
-                print(f"[+] Verified fallback capture device on: {dev}")
-                return dev
-
-        #print("[-] Warning: No functional video capture source could be verified.")
         return None
 
     def _generate_placeholder(self, message="NO CAMERA DETECTED"):
