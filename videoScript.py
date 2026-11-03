@@ -796,19 +796,24 @@ def video_feed():
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
 
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Pi Vision Streamer")
-    parser.add_argument(
-        "--debug-feed",
-        action="store_true",
-        help="Launch Flask web stream on port 5000",
-    )
+    parser = argparse.ArgumentParser(description="Pi Vision Appliance")
     parser.add_argument(
         "--device",
         type=str,
         default=None,
         help="Explicit device path (e.g., /dev/video0)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=5000,
+        help="Port for the web UI (default: 5000)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without the Flask web interface",
     )
     args = parser.parse_args()
 
@@ -816,11 +821,11 @@ if __name__ == "__main__":
     stream.start()
 
     try:
-        if args.debug_feed:
-            print("[*] Starting debug server at http://0.0.0.0:5000")
-            app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+        if not args.headless:
+            print(f"[*] Starting web interface at http://0.0.0.0:{args.port}")
+            app.run(host="0.0.0.0", port=args.port, debug=False, threaded=True)
         else:
-            print("[*] Running headless (pass --debug-feed to view stream on port 5000).")
+            print("[*] Running in headless mode. Press Ctrl+C to exit.")
             while True:
                 time.sleep(1)
     except KeyboardInterrupt:
