@@ -10,8 +10,9 @@ import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, render_template_string, request
 
-app = Flask(__name__)
+os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 
+app = Flask(__name__)
 
 class VideoStream:
     def __init__(self, src=None, width=640, height=480):
@@ -24,10 +25,11 @@ class VideoStream:
         if self.src is not None:
             print(f"[*] Initializing camera on source: {self.src}")
             self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            self.is_connected = self.cap.isOpened()
+            self.cap.set(cv2.CAP_PROP_FPS, 15)          # Caps USB packet rate to prevent drops
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Drops laggy backlogged frames at driver level
 
         self.latest_frame = None
         self.lock = threading.Lock()
@@ -136,9 +138,11 @@ class VideoStream:
         if new_src is not None:
             self.src = new_src
             self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            self.cap.set(cv2.CAP_PROP_FPS, 15)          # Caps USB packet rate to prevent drops
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Drops laggy backlogged frames at driver level
             self.is_connected = self.cap.isOpened()
             if self.is_connected:
                 print(f"[+] Camera reconnected on: {self.src}")
@@ -531,12 +535,14 @@ def index():
                 button.danger { background-color: #b91c1c; }
                 button.danger:hover { background-color: #991b1b; }
                 .panel { max-width: 600px; margin: 0 auto 20px auto; background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 6px; padding: 16px; text-align: left; }
-                .panel h4 { margin-top: 0; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+                .panel h4 { margin-top: 0; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
                 .face-grid { display: flex; flex-wrap: wrap; gap: 15px; justify-content: flex-start; }
-                .face-card { background: #262626; border: 1px solid #3a3a3a; border-radius: 6px; padding: 10px; width: 140px; text-align: center; }
-                .face-card img { width: 100px; height: 100px; object-fit: cover; border-radius: 4px; border: 1px solid #444; }
+                .face-card { position: relative; background: #262626; border: 1px solid #3a3a3a; border-radius: 6px; padding: 10px; width: 140px; text-align: center; }
+                .face-card .close-btn { position: absolute; top: 4px; right: 6px; background: transparent; color: #888; border: none; font-size: 16px; font-weight: bold; cursor: pointer; padding: 0 4px; line-height: 1; }
+                .face-card .close-btn:hover { color: #fff; }
+                .face-card img { width: 100px; height: 100px; object-fit: cover; border-radius: 4px; border: 1px solid #444; margin-top: 6px; }
                 .face-card input { width: 90%; margin-top: 8px; margin-bottom: 6px; padding: 5px; background: #121212; border: 1px solid #444; color: #eee; border-radius: 3px; font-size: 12px; }
-                .face-card button { width: 100%; padding: 6px; font-size: 12px; }
+                .face-card button.save-btn { width: 100%; padding: 6px; font-size: 12px; }
                 ul.profile-list { list-style: none; padding: 0; margin: 0; }
                 ul.profile-list li { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #2a2a2a; font-size: 14px; }
                 ul.profile-list button { padding: 4px 8px; font-size: 11px; }
@@ -555,7 +561,10 @@ def index():
 
             <!-- Face Registration Panel -->
             <div id="registrationPanel" class="panel" style="display: none;">
-                <h4>Detected Faces in Snapshot</h4>
+                <h4>
+                    <span>Detected Faces in Snapshot</span>
+                    <button class="close-btn" style="background:transparent;border:none;color:#888;font-size:13px;cursor:pointer;" onclick="closeRegistrationPanel()">Dismiss All</button>
+                </h4>
                 <div id="faceGrid" class="face-grid"></div>
             </div>
 
@@ -597,6 +606,22 @@ def index():
                     loadProfiles();
                 }
 
+                function closeRegistrationPanel() {
+                    document.getElementById('registrationPanel').style.display = 'none';
+                    document.getElementById('faceGrid').innerHTML = '';
+                }
+
+                function removeCard(cardId) {
+                    const card = document.getElementById(cardId);
+                    if (card) {
+                        card.remove();
+                    }
+                    const grid = document.getElementById('faceGrid');
+                    if (grid.children.length === 0) {
+                        closeRegistrationPanel();
+                    }
+                }
+
                 async function freezeAndEnumerate() {
                     const btn = document.getElementById('freezeBtn');
                     btn.disabled = true;
@@ -613,12 +638,15 @@ def index():
                             grid.innerHTML = '<p style="color: #999;">No faces detected in this snapshot. Adjust angle/lighting and try again.</p>';
                         } else {
                             data.thumbnails.forEach(t => {
+                                const cardId = `faceCard_${t.index}`;
                                 const card = document.createElement('div');
                                 card.className = 'face-card';
+                                card.id = cardId;
                                 card.innerHTML = `
+                                    <button class="close-btn" title="Dismiss" onclick="removeCard('${cardId}')">&times;</button>
                                     <img src="data:image/jpeg;base64,${t.image_b64}" alt="Face #${t.index}">
                                     <input type="text" id="nameInput_${t.index}" placeholder="Enter Name">
-                                    <button onclick="registerFace(${t.index})">Save</button>
+                                    <button class="save-btn" onclick="registerFace(${t.index}, '${cardId}')">Save</button>
                                 `;
                                 grid.appendChild(card);
                             });
@@ -632,7 +660,7 @@ def index():
                     }
                 }
 
-                async function registerFace(index) {
+                async function registerFace(index, cardId) {
                     const input = document.getElementById(`nameInput_${index}`);
                     const name = input.value.trim();
                     if (!name) {
@@ -648,15 +676,13 @@ def index():
                     const data = await res.json();
 
                     if (data.success) {
-                        input.value = '';
-                        input.placeholder = 'Saved!';
+                        removeCard(cardId);
                         loadProfiles();
                     } else {
                         alert('Registration error: ' + (data.error || 'Unknown'));
                     }
                 }
 
-                // Initial load
                 loadProfiles();
             </script>
         </body>
