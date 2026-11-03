@@ -1,4 +1,3 @@
-```
 # picam286
 
 A lightweight, thermal-aware face recognition and tracking appliance optimized for the Raspberry Pi 3 and Linux development workstations. Uses OpenCV DNN with YuNet (detection) and SFace (128D embeddings), backed by a web management interface for identity registration.
@@ -136,5 +135,3 @@ python3 videoScript.py
 ### Frame Tearing or Horizontal Slicing on USB Webcams
 * **Cause**: The camera is outputting uncompressed YUYV video, saturating the Raspberry Pi 3's shared USB 2.0 controller.
 * **Resolution**: Ensure `self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))` is active in `VideoStream`.
-
-```
