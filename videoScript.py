@@ -24,13 +24,19 @@ class VideoStream:
 
         if self.src is not None:
             print(f"[*] Initializing camera on source: {self.src}")
-            self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            is_v4l2 = isinstance(self.src, int) or (isinstance(self.src, str) and self.src.startswith("/dev/video"))
+            backend = cv2.CAP_V4L2 if is_v4l2 else cv2.CAP_ANY
+            self.cap = cv2.VideoCapture(self.src, backend)
+            
+            if is_v4l2:
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.cap.set(cv2.CAP_PROP_FPS, 15)          # Caps USB packet rate to prevent drops
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Drops laggy backlogged frames at driver level
-
+            self.cap.set(cv2.CAP_PROP_FPS, 15)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
+            self.is_connected = self.cap.isOpened()
+            
         self.latest_frame = None
         self.lock = threading.Lock()
         self.running = False
@@ -104,13 +110,19 @@ class VideoStream:
         new_src = self.detect_camera_source()
         if new_src is not None:
             self.src = new_src
-            self.cap = cv2.VideoCapture(self.src, cv2.CAP_V4L2)
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            is_v4l2 = isinstance(self.src, int) or (isinstance(self.src, str) and self.src.startswith("/dev/video"))
+            backend = cv2.CAP_V4L2 if is_v4l2 else cv2.CAP_ANY
+            self.cap = cv2.VideoCapture(self.src, backend)
+            
+            if is_v4l2:
+                self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-            self.cap.set(cv2.CAP_PROP_FPS, 15)          # Caps USB packet rate to prevent drops
-            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)     # Drops laggy backlogged frames at driver level
+            self.cap.set(cv2.CAP_PROP_FPS, 15)
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            
             self.is_connected = self.cap.isOpened()
+            
             if self.is_connected:
                 print(f"[+] Camera reconnected on: {self.src}")
                 self.was_connected = True
