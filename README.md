@@ -28,11 +28,12 @@ pip install opencv-python flask numpy
 Download the ONNX models for face detection (YuNet) and feature extraction (SFace) into the project root:
 
 ```bash
-wget -O face_detection_yunet_2023mar.onnx \
-  https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
-
-wget -O face_recognition_sface_2021dec.onnx \
-  https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+curl -L -o face_recognition_sface_2021dec.onnx \
+  https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx
+```
+```bash
+curl -L -o face_detection_yunet_2023mar.onnx \
+  https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx
 ```
 
 ### Configure User Permissions
