@@ -13,7 +13,6 @@ from flask import Flask, Response, jsonify, render_template_string, request
 import paho.mqtt.client as mqtt
 MQTT_BROKER = os.getenv("MQTT_BROKER", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_TOPIC_AUDIO = os.getenv("MQTT_TOPIC_AUDIO", "room1/audio/set")
 MQTT_TOPIC_EVENTS = os.getenv("MQTT_TOPIC_EVENTS", "room1/presence/events")
 
 
@@ -383,6 +382,24 @@ class FaceTracker:
         self.match_distance = match_distance
         self.frame_count = 0
 
+    def _dispatch_enter(self, name):
+        print(f"[+] Entered: {name}")
+        payload = {
+            "event": "person_entered",
+            "person": name,
+            "timestamp": int(time.time()),
+        }
+        publish_event(MQTT_TOPIC_EVENTS, payload)
+    
+    def _dispatch_exit(self, name):
+        print(f"[-] Left: {name}")
+        payload = {
+            "event": "person_left",
+            "person": name,
+            "timestamp": int(time.time()),
+        }
+        publish_event(MQTT_TOPIC_EVENTS, payload)
+        
     def update(self, detected_faces, frame, db, sface):
         self.frame_count += 1
 
@@ -394,6 +411,9 @@ class FaceTracker:
                 if self.tracks[tid]["disappeared"] > self.max_disappeared:
                     to_delete.append(tid)
             for tid in to_delete:
+                track = self.tracks[tid]
+                if track.get("announced"):
+                    self._dispatch_exit(track["name"])
                 del self.tracks[tid]
             return []
 
@@ -439,10 +459,25 @@ class FaceTracker:
                             aligned = sface.alignCrop(frame, detected_faces[d_idx])
                             feat = sface.feature(aligned)
                         name, score = db.match(feat)
+
+                        if track["name"] != name:
+                            if track.get("announced") and track["name"] != "Unknown":
+                                # Swap occured, ensure exit announcement of old name
+                                self._dispatch_exit(track["name"])
+                            track["announced"] = False
+                            track["match_streak"] = 1 if name != "Unknown" else 0
+                        else:
+                            if name != "Unknown":
+                                track["match_streak"] += 1
+                        
                         track["name"] = name
                         track["score"] = score
                         track["color"] = get_confidence_color(score)
                         track["last_rec_frame"] = self.frame_count
+                        
+                        if not track["announced"] and track["match_streak"] >= 3:
+                            track["announced"] = True
+                            self._dispatch_enter(name)                 
 
         # Register brand-new faces
         for d_idx, (cx, cy) in enumerate(current_centroids):
@@ -452,7 +487,7 @@ class FaceTracker:
                     feat = sface.feature(aligned)
                 name, score = db.match(feat)
                 color = get_confidence_color(score)
-
+                
                 self.tracks[self.next_id] = {
                     "centroid": (cx, cy),
                     "box": detected_faces[d_idx][0:4].astype(int),
@@ -461,6 +496,9 @@ class FaceTracker:
                     "score": score,
                     "color": color,
                     "last_rec_frame": self.frame_count,
+                    "match_streak": 1 if name != "Unknown" else 0,
+                    "announced": False,
+                    "start_time": time.time(),
                 }
                 self.next_id += 1
 
@@ -472,13 +510,16 @@ class FaceTracker:
                 if self.tracks[tid]["disappeared"] > self.max_disappeared:
                     to_delete.append(tid)
         for tid in to_delete:
+            track = self.tracks[tid]
+            if track.get("announced"):
+                self._dispatch_exit(track["name"])
             del self.tracks[tid]
 
         # Return list of active face render targets for current frame
         return [self.tracks[tid] for tid in self.tracks if self.tracks[tid]["disappeared"] == 0]
 
-
-tracker = FaceTracker(max_disappeared=15, match_distance=70)
+# 3 second grace period, 70 pixel same person distance
+tracker = FaceTracker(max_disappeared=45, match_distance=70)
 
 
 def process_frame(frame):
