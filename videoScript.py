@@ -37,7 +37,7 @@ class VideoStream:
         self.thread = None
         self.was_connected = self.is_connected
 
-    _test_device(self, dev):
+    def _test_device(self, dev):
         """Attempts to open a device node and grab a single test frame quickly."""
         cap = cv2.VideoCapture(dev, cv2.CAP_V4L2)
         if not cap.isOpened():
