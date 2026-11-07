@@ -10,6 +10,13 @@ import cv2
 import numpy as np
 from flask import Flask, Response, jsonify, render_template_string, request
 
+import paho.mqtt.client as mqtt
+MQTT_BROKER = os.getenv("MQTT_BROKER", "127.0.0.1")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_TOPIC_AUDIO = os.getenv("MQTT_TOPIC_AUDIO", "room1/audio/set")
+MQTT_TOPIC_EVENTS = os.getenv("MQTT_TOPIC_EVENTS", "room1/presence/events")
+
+
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 
 app = Flask(__name__)
@@ -291,7 +298,30 @@ class ProfileDatabase:
         """Returns dict of profile names and sample counts."""
         return {name: len(vecs) for name, vecs in self.profiles.items()}
 
+
 db = ProfileDatabase()
+
+
+mqtt_client = mqtt.Client()
+
+def on_mqtt_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print(f"[+] Connected to MQTT Broker at {MQTT_BROKER}:{MQTT_PORT}")
+    else:
+        print(f"[-] Failed to connect to MQTT Broker, return code {rc}")
+
+mqtt_client.on_connect = on_mqtt_connect
+
+
+def publish_event(topic, payload):
+    try:
+        data = json.dumps(payload)
+        res = mqtt_client.publish(topic, data)
+        if res.rc != mqtt.MQTT_ERR_SUCCESS:
+            print(f"[-] MQTT Publish failed with code {res.rc}")
+    except Exception as e:
+        print(f"[-] MQTT publish error: {e}")
+
 
 # Initialize YuNet Detector (input size dynamically updated per frame)
 if not os.path.exists(YUNET_MODEL):
@@ -829,6 +859,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    try:
+        mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+        mqtt_client.loop_start()
+    except Exception as e:
+        print(f"[-] Could not connect to MQTT broker: {e}")
+
     stream = VideoStream(src=args.device)
     stream.start()
 
@@ -843,4 +879,7 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\n[*] Stopping stream...")
     finally:
+        print("\n[*] Stopping MQTT client and camera stream...")
+        mqtt_client.loop_stop()
+        mqtt_client.disconnect()
         stream.stop()
