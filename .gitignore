@@ -14,3 +14,6 @@ models/
 
 # Local facial profiles database
 profiles.json
+
+# Audio files
+audio/
