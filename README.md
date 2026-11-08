@@ -1,130 +1,114 @@
 # picam286
 
-A lightweight, resource-efficient face recognition and tracking appliance optimized for the Raspberry Pi 3 and Linux development workstations. Uses OpenCV DNN with YuNet (detection) and SFace (128D embeddings), backed by a web management interface for identity registration.
+A lightweight, resource-efficient face recognition and presence detection appliance for the Raspberry Pi 3 and Linux workstations. Uses OpenCV DNN with YuNet (detection) and SFace (128D embeddings), backed by a web management interface and an MQTT event architecture.
 
 ---
 
-## 1. Prerequisites & System Setup
+## 1. Quick Start
+
+Run the automated setup script to verify dependencies, check group permissions, download required models into `models/`, and diagnose your camera interface:
+
+```bash
+chmod +x setup.sh
+./setup.sh
+```
+
+If the script added your user to the `video` group, run `newgrp video` or re-login before launching the camera feed.
+
+---
+
+## 2. Prerequisites & System Setup
 
 ### Raspberry Pi 3 (Raspberry Pi OS / Debian Bookworm)
-Do **not** compile OpenCV or install `opencv-python` via `pip` on the Raspberry Pi 3. The board's 1GB RAM will run out of memory (OOM crash) during compilation. Use precompiled system packages:
+Do not build OpenCV or install `opencv-python` via pip on the Raspberry Pi 3. The 1GB RAM ceiling will trigger out-of-memory errors. Install precompiled packages:
 
 ```bash
 sudo apt update
-sudo apt install -y python3-opencv opencv-data python3-flask python3-numpy v4l-utils wget
+sudo apt install -y curl v4l-utils python3-opencv python3-flask python3-numpy python3-paho-mqtt libcamera-tools
 ```
 
-### Linux Workstation / Distrobox Development (Fedora Silverblue, Ubuntu, Arch)
-On x86_64 development machines, it avoids building opencv dependencies from source so it is preferred to use venv and pip:
+### Linux Workstation / Distrobox
+On x86 development environments, use a standard Python virtual environment:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --upgrade pip
-pip install opencv-python flask numpy
+pip install opencv-python flask numpy paho-mqtt
 ```
-
-### Download Pretrained Models
-Download the ONNX models for face detection (YuNet) and feature extraction (SFace) into the project root:
-
-```bash
-curl -L -o face_recognition_sface_2021dec.onnx \
-  https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx
-```
-```bash
-curl -L -o face_detection_yunet_2023mar.onnx \
-  https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx
-```
-
-### Configure User Permissions
-Ensure your user belongs to the `video` group to access camera hardware:
-
-```bash
-sudo usermod -aG video $USER
-```
-Log out and back in, or run `newgrp video`, for the group permissions to take effect.
 
 ---
 
-## 2. Hardware Verification
+## 3. Project Structure
 
-Verify that connected camera devices are recognized by the kernel:
-
-```bash
-# Check V4L2 device nodes
-v4l2-ctl --list-devices
-
-# Check CSI ribbon cameras on Raspberry Pi
-rpicam-hello --list-cameras
+```text
+picam286/
+├── models/
+│   ├── face_detection_yunet_2023mar.onnx
+│   └── face_recognition_sface_2021dec.onnx
+├── profiles.json          # Persistent 128D face embeddings
+├── setup.sh               # Environment check and model download script
+├── videoScript.py         # Vision engine & MQTT presence publisher
+└── README.md
 ```
-
-- **CSI ribbon cameras** interface via the Broadcom ISP pipeline (`bcm2835-unicam` / `libcamera`).
-- **USB webcams** interface via standard UVC drivers (`uvcvideo`).
 
 ---
 
-## 3. Usage
-
-The web-based enrollment interface runs by default on port `5000`.
+## 4. Usage
 
 ### Raspberry Pi with CSI Ribbon Camera
-On Raspberry Pi OS (Bullseye / Bookworm), CSI cameras require the `libcamerify` V4L2 compatibility wrapper to route through the hardware Image Signal Processor (ISP):
+On Raspberry Pi OS, CSI cameras interface through libcamera and require the `libcamerify` wrapper for V4L2 compatibility:
 
 ```bash
 libcamerify python3 videoScript.py
 ```
 
 ### Linux PC / Laptop or USB Webcam on Pi
-When running on a development workstation, laptop webcam, or standard USB webcam on the Pi, execute directly with Python:
+Run directly with Python:
 
 ```bash
 python3 videoScript.py
 ```
 
-- **Web Dashboard**: Open `http://<DEVICE_IP>:5000` in a browser.
+Open `http://<DEVICE_IP>:5000` in a browser to view the feed or register faces.
 
-### Advanced Flags
+### Network Cameras (RTSP / HTTP)
+Remote IP cameras (e.g., RTSP security streams, ESP32-CAM) can be passed directly via `--device`:
 
-* **Specify device manually:**
-  ```bash
-  python3 videoScript.py --device /dev/video0
-  ```
-* **Change web port:**
-  ```bash
-  python3 videoScript.py --port 8080
-  ```
-* **Run headless (background service without Flask server):**
-  ```bash
-  python3 videoScript.py --headless
-  ```
+```bash
+python3 videoScript.py --device "rtsp://192.168.1.50:554/stream"
+```
+
+### CLI Flags
+
+- `--device /dev/video0`: Explicitly select a camera node or stream URL.
+- `--port 8080`: Custom web server port (default: 5000).
+- `--headless`: Run presence detection in the terminal without starting the Flask interface.
 
 ---
 
-## 4. Key Features & Pipeline Architecture
+## 5. Web Registration Interface
 
-* **Multi-Person Centroid Tracking**: Uses a lightweight Euclidean centroid tracker (`FaceTracker`) to track multiple faces simultaneously across frames. Each individual retains their own tracking ID, identity label, and confidence score.
-* **Recognition Throttling**: Deep 128D SFace feature extraction is throttled to run only once every 15 frames per tracked individual (or when a new face enters). The lighter bounding box detection runs continuously.
-* **Web Enrollment & Freeze-Frame Registration**: The web interface allows freezing any live frame to detect, crop, and display candidate faces. Names can be typed and submitted by pressing **Enter** or clicking **Save**.
-* **Case-Insensitive Profile Persistence**: Profiles are stored locally in `profiles.json`. Names preserve original display capitalization upon creation (e.g., `"Jack"`), but subsequent registrations and lookups match case-insensitively (`"jack"`, `"JACK"`).
-* **Hardware Recovery & Anti-Tearing**: Enforces `MJPG` capture at 15 FPS with driver buffer size 1. If a camera disconnects, the system serves a diagnostic placeholder frame and polls for reconnection every 2 seconds without crashing.
+1. Navigate to `http://<DEVICE_IP>:5000`.
+2. Click **Freeze Frame & Register Faces**.
+3. Type the user's name on the detected thumbnail and press **Enter** or click **Save**.
+4. Profiles are stored in `profiles.json` and matched case-insensitively in real time.
 
 ---
 
-## 5. Troubleshooting & Known Issues
+## 6. Troubleshooting & Limitations
 
 ### `cv2.error: Layer with requested id=-1 not found`
-* **Cause**: Stock Debian 12 (Bookworm) repositories provide OpenCV 4.6.0, which contains an upstream bug in its ONNX parser when handling dynamic input sizing with `face_detection_yunet_2023mar.onnx`.
-* **Resolution**:
-  * **On PC / Laptop / Distrobox**: Install modern OpenCV wheels in a virtual environment (`pip install --upgrade opencv-python`).
-  * **On Raspberry Pi 3**: Raspbian ships updated OpenCV versions so this shouldn't be an issue, but if you still encounter this error, try downloading the pinned OpenCV 4.6-compatible 2022 release:
-    ```bash
-    wget -O face_detection_yunet_2022mar.onnx \
-      https://github.com/opencv/opencv_zoo/raw/7e062e54cf5410c09b795ff71b4a255e58498c79/models/face_detection_yunet/face_detection_yunet_2022mar.onnx
-    ```
-    Then update `YUNET_MODEL = "face_detection_yunet_2022mar.onnx"` in `videoScript.py`.
-
-### `VIDEOIO(V4L2:/dev/video0): select() timeout` on Pi CSI Camera
-* **Cause**: On modern Raspberry Pi OS, the CSI ribbon camera operates under `libcamera` and does not provide an ISP-demodulated V4L2 video stream to OpenCV directly.
-* **Resolution**: Launch your script prefixed with `libcamerify`:
+- **Cause**: Stock Debian 12 (Bookworm) packages OpenCV 4.6.0, which contains an upstream bug handling dynamic input sizing in `face_detection_yunet_2023mar.onnx`.
+- **Fix**: Download the pinned OpenCV 4.6-compatible 2022 release:
   ```bash
-  libcamerify python3 videoScript.py
+  curl -fL -o models/face_detection_yunet_2022mar.onnx \
+    [https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2022mar.onnx](https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2022mar.onnx)
+  ```
+  Then set `YUNET_MODEL = os.path.join(MODELS_DIR, "face_detection_yunet_2022mar.onnx")` in `videoScript.py`.
+
+### `VIDEOIO(V4L2:/dev/video0): select() timeout` on CSI Camera
+- **Cause**: CSI cameras do not supply standard V4L2 device frames without ISP processing.
+- **Fix**: Launch using `libcamerify python3 videoScript.py`.
+
+### Network Stream Disconnections
+- Automatic reconnection and polling are currently optimized for local `/dev/video*` nodes. Dropped RTSP/HTTP connections may block OpenCV's capture thread until restarted.

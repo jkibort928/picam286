@@ -186,10 +186,15 @@ stream = None
 # Profile Management & Model Initialization
 # ---------------------------------------------------------
 PROFILES_FILE = "profiles.json"
+
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+MODELS_DIR = os.path.join(ROOT_DIR, "models")
+
 # Stage 1: Detects face bounding boxes and 5 landmarks used to align the crop
-YUNET_MODEL = "face_detection_yunet_2023mar.onnx"
+YUNET_MODEL = os.path.join(MODELS_DIR, "face_detection_yunet_2023mar.onnx")
 # Stage 2: Converts the aligned face crop into a 128D vector for identity matching
-SFACE_MODEL = "face_recognition_sface_2021dec.onnx"
+SFACE_MODEL = os.path.join(MODELS_DIR, "face_recognition_sface_2021dec.onnx")
+
 
 class ProfileDatabase:
     """Stores and matches 128D facial embedding vectors."""
