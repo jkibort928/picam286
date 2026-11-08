@@ -1,129 +1,234 @@
-# picam286
+# Personalized Face Recognition and JBL Audio
 
-A lightweight, resource-efficient face recognition and tracking appliance optimized for the Raspberry Pi 3 and Linux development workstations. Uses OpenCV DNN with YuNet (detection) and SFace (128D embeddings), backed by a web management interface for identity registration.
+This project uses a Raspberry Pi camera to recognize enrolled users. When a
+user is recognized, the system publishes an MQTT event containing that user's
+name, song, and volume. The audio subscriber receives the event and plays the
+user's song through a connected JBL Bluetooth speaker.
 
----
+## Project flow
 
-## 1. Prerequisites & System Setup
+Camera
+→ Face detection
+→ Face recognition
+→ Identify enrolled user
+→ Publish MQTT audio event
+→ Set volume
+→ Play that user's song through the JBL speaker
 
-### Raspberry Pi 3 (Raspberry Pi OS / Debian Bookworm)
-Do **not** compile OpenCV or install `opencv-python` via `pip` on the Raspberry Pi 3. The board's 1GB RAM will run out of memory (OOM crash) during compilation. Use precompiled system packages:
+## Folder structure
+
+```text
+pi-jbl-face-demo/
+├── app.py                    # Flask UI, camera, recognition, enrollment
+├── audio_subscriber.py       # Receives MQTT events and plays songs
+├── enroll_kirthana.py        # Optional legacy enrollment script
+├── mqtt_contract.md          # MQTT message format
+├── requirements.txt
+├── .gitignore
+├── models/                   # Downloaded model files
+├── embeddings/               # Generated face embeddings
+├── audio/                    # User MP3 files
+└── profiles.json             # User names, songs, and settings
+```
+
+## 1. Install Raspberry Pi packages
 
 ```bash
 sudo apt update
-sudo apt install -y python3-opencv opencv-data python3-flask python3-numpy v4l-utils wget
+
+sudo apt install -y \
+  python3-picamera2 \
+  python3-opencv \
+  python3-numpy \
+  python3-pip \
+  mpg123
 ```
 
-### Linux Workstation / Distrobox Development (Fedora Silverblue, Ubuntu, Arch)
-On x86_64 development machines, it avoids building opencv dependencies from source so it is preferred to use venv and pip:
+## 2. Create the required folders
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install opencv-python flask numpy
+cd ~/pi-jbl-face-demo
+mkdir -p models embeddings audio
 ```
 
-### Download Pretrained Models
-Download the ONNX models for face detection (YuNet) and feature extraction (SFace) into the project root:
+## 3. Download the face-recognition models
 
 ```bash
+cd ~/pi-jbl-face-demo/models
+
 wget -O face_detection_yunet_2023mar.onnx \
-  https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
+https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx
 
 wget -O face_recognition_sface_2021dec.onnx \
-  https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
+https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx
 ```
 
-### Configure User Permissions
-Ensure your user belongs to the `video` group to access camera hardware:
+Confirm that the model files exist:
 
 ```bash
-sudo usermod -aG video $USER
+ls -lh ~/pi-jbl-face-demo/models
 ```
-Log out and back in, or run `newgrp video`, for the group permissions to take effect.
 
----
+## 4. Connect the JBL speaker
 
-## 2. Hardware Verification
-
-Verify that connected camera devices are recognized by the kernel:
+Turn on the JBL speaker and open Bluetooth control:
 
 ```bash
-# Check V4L2 device nodes
-v4l2-ctl --list-devices
-
-# Check CSI ribbon cameras on Raspberry Pi
-rpicam-hello --list-cameras
+bluetoothctl
 ```
 
-- **CSI ribbon cameras** interface via the Broadcom ISP pipeline (`bcm2835-unicam` / `libcamera`).
-- **USB webcams** interface via standard UVC drivers (`uvcvideo`).
+Inside `bluetoothctl`, run:
 
----
+```text
+power on
+agent on
+default-agent
+scan on
+```
 
-## 3. Usage
+Find the JBL speaker's MAC address. Then run:
 
-The web-based enrollment interface runs by default on port `5000`.
+```text
+scan off
+pair JBL_MAC_ADDRESS
+trust JBL_MAC_ADDRESS
+connect JBL_MAC_ADDRESS
+exit
+```
 
-### Raspberry Pi with CSI Ribbon Camera
-On Raspberry Pi OS (Bullseye / Bookworm), CSI cameras require the `libcamerify` V4L2 compatibility wrapper to route through the hardware Image Signal Processor (ISP):
+Confirm that the JBL speaker is connected:
 
 ```bash
-libcamerify python3 videoScript.py
+bluetoothctl info JBL_MAC_ADDRESS
+pactl list short sinks
 ```
 
-### Linux PC / Laptop or USB Webcam on Pi
-When running on a development workstation, laptop webcam, or standard USB webcam on the Pi, execute directly with Python:
+## 5. Add songs for users
+
+Songs must be stored on the Raspberry Pi in:
+
+```text
+/.../pi-jbl-face-demo/audio/
+```
+
+From the Mac, copy a song to the Raspberry Pi:
 
 ```bash
-python3 videoScript.py
+scp ~/Downloads/..._audio.mp3 \
+...@PI_IP_ADDRESS:/...pi-jbl-face-demo/audio/..._audio.mp3
 ```
 
-- **Web Dashboard**: Open `http://<DEVICE_IP>:5000` in a browser.
+Confirm that the song exists on the Raspberry Pi:
 
-### Advanced Flags
+```bash
+ls -lh ~/pi-jbl-face-demo/audio
+```
 
-* **Specify device manually:**
-  ```bash
-  python3 videoScript.py --device /dev/video0
-  ```
-* **Change web port:**
-  ```bash
-  python3 videoScript.py --port 8080
-  ```
-* **Run headless (background service without Flask server):**
-  ```bash
-  python3 videoScript.py --headless
-  ```
+The filename entered during enrollment must exactly match the filename in the
+`audio` folder.
 
----
+## 6. Start the MQTT audio subscriber
 
-## 4. Key Features & Pipeline Architecture
+Open the first Raspberry Pi terminal:
 
-* **Multi-Person Centroid Tracking**: Uses a lightweight Euclidean centroid tracker (`FaceTracker`) to track multiple faces simultaneously across frames. Each individual retains their own tracking ID, identity label, and confidence score.
-* **Recognition Throttling**: Deep 128D SFace feature extraction is throttled to run only once every 15 frames per tracked individual (or when a new face enters). The lighter bounding box detection runs continuously.
-* **Web Enrollment & Freeze-Frame Registration**: The web interface allows freezing any live frame to detect, crop, and display candidate faces. Names can be typed and submitted by pressing **Enter** or clicking **Save**.
-* **Case-Insensitive Profile Persistence**: Profiles are stored locally in `profiles.json`. Names preserve original display capitalization upon creation (e.g., `"Jack"`), but subsequent registrations and lookups match case-insensitively (`"jack"`, `"JACK"`).
-* **Hardware Recovery & Anti-Tearing**: Enforces `MJPG` capture at 15 FPS with driver buffer size 1. If a camera disconnects, the system serves a diagnostic placeholder frame and polls for reconnection every 2 seconds without crashing.
+```bash
+cd ~/pi-jbl-face-demo
+python3 audio_subscriber.py
+```
 
----
+Keep this terminal running.
 
-## 5. Troubleshooting & Known Issues
+## 7. Start the camera and web application
 
-### `cv2.error: Layer with requested id=-1 not found`
-* **Cause**: Stock Debian 12 (Bookworm) repositories provide OpenCV 4.6.0, which contains an upstream bug in its ONNX parser when handling dynamic input sizing with `face_detection_yunet_2023mar.onnx`.
-* **Resolution**:
-  * **On PC / Laptop / Distrobox**: Install modern OpenCV wheels in a virtual environment (`pip install --upgrade opencv-python`).
-  * **On Raspberry Pi 3**: Raspbian ships updated OpenCV versions so this shouldn't be an issue, but if you still encounter this error, try downloading the pinned OpenCV 4.6-compatible 2022 release:
-    ```bash
-    wget -O face_detection_yunet_2022mar.onnx \
-      https://github.com/opencv/opencv_zoo/raw/7e062e54cf5410c09b795ff71b4a255e58498c79/models/face_detection_yunet/face_detection_yunet_2022mar.onnx
-    ```
-    Then update `YUNET_MODEL = "face_detection_yunet_2022mar.onnx"` in `videoScript.py`.
+Open a second Raspberry Pi terminal:
 
-### `VIDEOIO(V4L2:/dev/video0): select() timeout` on Pi CSI Camera
-* **Cause**: On modern Raspberry Pi OS, the CSI ribbon camera operates under `libcamera` and does not provide an ISP-demodulated V4L2 video stream to OpenCV directly.
-* **Resolution**: Launch your script prefixed with `libcamerify`:
-  ```bash
-  libcamerify python3 videoScript.py
+```bash
+cd ~/pi-jbl-face-demo
+python3 app.py
+```
+
+Open the web interface on the Mac:
+
+```text
+http://PI_IP_ADDRESS:5000
+```
+
+Replace `PI_IP_ADDRESS` with the Raspberry Pi's actual IP address.
+
+## 8. Enroll a user
+
+Use the enrollment form in the web interface.
+
+Enter:
+
+1. The user's name
+2. The exact MP3 filename
+3. The desired playback volume
+4. Select **Start enrollment**
+
+The user should look at the camera while the application captures face samples.
+
+Repeat the process for every user. For example:
+
+```text
+Ki.... → ki....._song.mp3
+Ka.... → ka....._audio.mp3
+User3    → user3_song.mp3
+```
+
+Each user's face embedding and audio settings are saved locally.
+
+## 9. Delete and re-enroll a user
+
+To enroll a user again, click the **Delete** button next to that user in the
+web interface.
+
+Then enter the user's information again and select **Start enrollment**.
+
+## 10. Recognition and playback process
+
+When the camera recognizes an enrolled user, the application creates an MQTT
+message similar to:
+
+```json
+{
+  "person": "Ki....",
+  "song": "ki....._song.mp3",
+  "volume": 50
+}
+```
+
+The audio subscriber receives the message and:
+
+1. Identifies the user
+2. Verifies that the song exists
+3. Sets the requested volume
+4. Plays the song through the JBL speaker
+
+Unknown faces should not trigger audio playback.
+
+## 11. Manually test MQTT playback
+
+The MQTT audio system can be tested without face recognition:
+
+```bash
+mosquitto_pub \
+  -h MQTT_BROKER_IP \
+  -t "room1/audio/set" \
+  -m '{"person":"Ka.....","song":"ka...._audio.mp3","volume":20}'
+```
+
+Replace `MQTT_BROKER_IP` with the IP address of the computer running Mosquitto.
+
+## 12. Optional legacy enrollment script
+
+The original single-user enrollment script can be run with:
+
+```bash
+cd ~/pi-jbl-face-demo
+python3 enroll_kirthana.py
+```
+
+For the current multi-user system, enroll users through the web interface
+instead.
+```
