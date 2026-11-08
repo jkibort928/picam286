@@ -13,8 +13,6 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-If the script added your user to the `video` group, run `newgrp video` or re-login before launching the camera feed.
-
 ---
 
 ## 2. Prerequisites & System Setup
@@ -36,24 +34,24 @@ source .venv/bin/activate
 pip install opencv-python flask numpy paho-mqtt
 ```
 
----
+### Manual Pretrained Model Download
+If not using `setup.sh`, manually create `models/` and fetch the ONNX models directly from Hugging Face:
 
-## 3. Project Structure
+```bash
+mkdir -p models
 
-```text
-picam286/
-├── models/
-│   ├── face_detection_yunet_2023mar.onnx
-│   └── face_recognition_sface_2021dec.onnx
-├── profiles.json          # Persistent 128D face embeddings
-├── setup.sh               # Environment check and model download script
-├── videoScript.py         # Vision engine & MQTT presence publisher
-└── README.md
+# YuNet Face Detection (2023 Mar)
+curl -fL -o models/face_detection_yunet_2023mar.onnx \
+  https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2023mar.onnx
+
+# SFace Face Recognition (2021 Dec)
+curl -fL -o models/face_recognition_sface_2021dec.onnx \
+  https://huggingface.co/opencv/face_recognition_sface/resolve/main/face_recognition_sface_2021dec.onnx
 ```
 
 ---
 
-## 4. Usage
+## 3. Usage
 
 ### Raspberry Pi with CSI Ribbon Camera
 On Raspberry Pi OS, CSI cameras interface through libcamera and require the `libcamerify` wrapper for V4L2 compatibility:
@@ -86,7 +84,7 @@ python3 videoScript.py --device "rtsp://192.168.1.50:554/stream"
 
 ---
 
-## 5. Web Registration Interface
+## 4. Web Registration Interface
 
 1. Navigate to `http://<DEVICE_IP>:5000`.
 2. Click **Freeze Frame & Register Faces**.
@@ -95,14 +93,15 @@ python3 videoScript.py --device "rtsp://192.168.1.50:554/stream"
 
 ---
 
-## 6. Troubleshooting & Limitations
+## 5. Troubleshooting & Limitations
 
 ### `cv2.error: Layer with requested id=-1 not found`
 - **Cause**: Stock Debian 12 (Bookworm) packages OpenCV 4.6.0, which contains an upstream bug handling dynamic input sizing in `face_detection_yunet_2023mar.onnx`.
-- **Fix**: Download the pinned OpenCV 4.6-compatible 2022 release:
+- **Fix**: If on x86, use pip in a venv to install modern dependencies (noted in section 2).
+  If you are unable to do that, download the pinned OpenCV 4.6-compatible 2022 release:
   ```bash
   curl -fL -o models/face_detection_yunet_2022mar.onnx \
-    [https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2022mar.onnx](https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2022mar.onnx)
+    https://huggingface.co/opencv/face_detection_yunet/resolve/main/face_detection_yunet_2022mar.onnx
   ```
   Then set `YUNET_MODEL = os.path.join(MODELS_DIR, "face_detection_yunet_2022mar.onnx")` in `videoScript.py`.
 
