@@ -1,0 +1,17 @@
+{
+  "Kirthana": {
+    "embedding": "embeddings/kirthana.npy",
+    "song": "kirthana_song.mp3",
+    "volume": 20
+  },
+  "PartnerName": {
+    "embedding": "embeddings/partnername.npy",
+    "song": "partner_song.mp3",
+    "volume": 30
+  },
+  "ThirdUser": {
+    "embedding": "embeddings/thirduser.npy",
+    "song": "third_song.mp3",
+    "volume": 30
+  }
+}
