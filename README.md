@@ -84,7 +84,36 @@ python3 videoScript.py --device "rtsp://192.168.1.50:554/stream"
 
 ---
 
-## 4. Web Registration Interface
+## 4. MQTT Presence Contract
+
+The vision engine publishes lifecycle events to:
+
+- **Topic:** `room1/presence/events`
+- **Broker:** Configurable via `MQTT_BROKER` and `MQTT_PORT` environment variables (defaults to `127.0.0.1` on port `1883`)
+
+### Payloads
+
+**1. Person Entered**  
+Emitted once an individual's face matches a stored embedding for 3 consecutive recognition cycles:
+```json
+{
+  "event": "person_entered",
+  "person": "Jack",
+  "timestamp": 1731000456
+}
+```
+
+**2. Person Left**  
+Emitted when a confirmed occupant is lost for longer than 45 frames (~3.0 seconds):
+```json
+{
+  "event": "person_left",
+  "person": "Jack",
+  "timestamp": 1731000489
+}
+```
+
+## 5. Web Registration Interface
 
 1. Navigate to `http://<DEVICE_IP>:5000`.
 2. Click **Freeze Frame & Register Faces**.
