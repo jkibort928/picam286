@@ -6,5 +6,9 @@
   "Kartheek": {
     "song": "kartheek_audio.mp3",
     "volume": 30
+  },
+  "Jack": {
+    "song": "jack_song.mp3",
+    "volume": 20
   }
 }
