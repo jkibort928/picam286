@@ -10,5 +10,9 @@
   "Jack": {
     "song": "jack_song.mp3",
     "volume": 20
+  },
+  "Avneet": {
+    "song": "avneet_song.mp3",
+    "volume": 20
   }
 }
