@@ -1,10 +1,10 @@
 {
   "Kirthana": {
-    "song": "kartheek_audio.mp3",
+    "song": "kirthana_song.mp3",
     "volume": 20
   },
   "Kartheek": {
-    "song": "kirthana_song.mp3",
+    "song": "kartheek_audio.mp3",
     "volume": 30
   }
 }
