@@ -2,7 +2,10 @@
 
 import json
 import os
+import queue
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import paho.mqtt.client as mqtt
@@ -12,7 +15,6 @@ ROOT = Path(__file__).resolve().parent
 AUDIO_DIR = ROOT / "audio"
 AUDIO_PROFILES_FILE = ROOT / "audio_profiles.json"
 
-# Set MQTT_BROKER to the IP address of the computer running Mosquitto.
 MQTT_BROKER = os.getenv("MQTT_BROKER", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC = os.getenv(
@@ -20,43 +22,33 @@ MQTT_TOPIC = os.getenv(
     "room1/presence/events",
 )
 
-# Replace this with the JBL sink shown by:
-# pactl list short sinks
 JBL_SINK = os.getenv(
     "JBL_SINK",
     "bluez_output.E8_26_CF_07_74_A0.1",
 )
 
+song_queue = queue.Queue()
+queued_people = set()
+present_people = set()
+
+state_lock = threading.Lock()
 player = None
+current_person = None
 
 
 def load_audio_profiles():
-    """Load each user's song and volume settings."""
-    if not AUDIO_PROFILES_FILE.exists():
-        print(f"Missing audio profile file: {AUDIO_PROFILES_FILE}")
-        return {}
-
-    try:
-        with AUDIO_PROFILES_FILE.open("r", encoding="utf-8") as file:
-            profiles = json.load(file)
-
-        print(f"Loaded audio profiles for: {', '.join(profiles.keys())}")
-        return profiles
-
-    except json.JSONDecodeError as error:
-        print(f"Invalid JSON in {AUDIO_PROFILES_FILE}: {error}")
-        return {}
+    with AUDIO_PROFILES_FILE.open("r", encoding="utf-8") as file:
+        return json.load(file)
 
 
 audio_profiles = load_audio_profiles()
 
 
 def stop_current_song():
-    """Stop the currently playing song, if one exists."""
-    global player
+    global player, current_person
 
     if player is not None and player.poll() is None:
-        print("Stopping the current song.")
+        print(f"Stopping song for {current_person}")
         player.terminate()
 
         try:
@@ -65,16 +57,16 @@ def stop_current_song():
             player.kill()
 
     player = None
+    current_person = None
 
 
-def play_user_song(person):
-    """Look up and play the song assigned to a recognized user."""
-    global player
+def play_song(person):
+    global player, current_person
 
     profile = audio_profiles.get(person)
 
     if profile is None:
-        print(f"No audio profile found for recognized user: {person}")
+        print(f"No audio profile found for {person}")
         return
 
     song_name = Path(profile["song"]).name
@@ -84,33 +76,55 @@ def play_user_song(person):
         print(f"Song does not exist: {song_path}")
         return
 
-    try:
-        volume = int(profile.get("volume", 50))
-    except (TypeError, ValueError):
-        volume = 50
+    volume = max(0, min(100, int(profile.get("volume", 50))))
 
-    volume = max(0, min(100, volume))
-
-    # If another user's greeting is playing, replace it.
-    stop_current_song()
-
-    # Select the JBL speaker as the audio output.
     subprocess.run(
         ["pactl", "set-default-sink", JBL_SINK],
         check=False,
     )
 
-    # Set the JBL volume.
     subprocess.run(
         ["pactl", "set-sink-volume", JBL_SINK, f"{volume}%"],
         check=False,
     )
 
-    print(f"Playing {song_name} for {person} at {volume}%.")
+    current_person = person
+
+    print(f"Playing {song_name} for {person} at {volume}%")
 
     player = subprocess.Popen(
         ["mpg123", "-q", str(song_path)]
     )
+
+    # Wait while the song is playing.
+    while player.poll() is None:
+        time.sleep(0.1)
+
+    print(f"Finished playing {song_name}")
+
+    player = None
+    current_person = None
+
+
+def audio_worker():
+    """Play recognized users in the order they entered."""
+    global current_person
+
+    while True:
+        person = song_queue.get()
+
+        with state_lock:
+            queued_people.discard(person)
+
+            # Do not play a song for someone who already left.
+            if person not in present_people:
+                song_queue.task_done()
+                continue
+
+        try:
+            play_song(person)
+        finally:
+            song_queue.task_done()
 
 
 def on_connect(client, userdata, flags, rc):
@@ -124,30 +138,48 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, message):
     try:
-        payload = json.loads(message.payload.decode("utf-8"))
-    except json.JSONDecodeError as error:
-        print(f"Invalid MQTT JSON: {error}")
+        event = json.loads(message.payload.decode("utf-8"))
+    except json.JSONDecodeError:
+        print("Received invalid MQTT JSON")
         return
 
-    event_type = payload.get("event")
-    person = payload.get("person")
+    event_type = event.get("event")
+    person = event.get("person")
 
     if not person:
-        print("MQTT event did not include a person.")
         return
 
-    print(f"Received event: {event_type} for {person}")
-
-    # Play a greeting only when a person enters.
     if event_type == "person_entered":
-        play_user_song(person)
+        with state_lock:
+            present_people.add(person)
 
-    # The song is allowed to finish after the person leaves.
+            # Prevent duplicate songs while the same person remains present.
+            if (
+                person != current_person
+                and person not in queued_people
+            ):
+                queued_people.add(person)
+                song_queue.put(person)
+                print(f"Queued audio for {person}")
+
     elif event_type == "person_left":
-        print(f"{person} left the room. No new song will be played.")
+        with state_lock:
+            present_people.discard(person)
+
+        print(f"{person} left the room")
+
+        # Stop the current person's audio after the five-second grace period.
+        if person == current_person:
+            stop_current_song()
 
 
 def main():
+    worker = threading.Thread(
+        target=audio_worker,
+        daemon=True,
+    )
+    worker.start()
+
     client = mqtt.Client()
     client.on_connect = on_connect
     client.on_message = on_message

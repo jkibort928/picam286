@@ -524,8 +524,7 @@ class FaceTracker:
         return [self.tracks[tid] for tid in self.tracks if self.tracks[tid]["disappeared"] == 0]
 
 # 3 second grace period, 70 pixel same person distance
-tracker = FaceTracker(max_disappeared=45, match_distance=70)
-
+tracker = FaceTracker(max_disappeared=75, match_distance=70)
 
 def process_frame(frame):
     """Detects faces every frame and uses centroid tracking to cache recognition per person."""
